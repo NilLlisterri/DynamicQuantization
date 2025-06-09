@@ -2,7 +2,6 @@ import json
 import os
 import random
 
-import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
@@ -10,15 +9,17 @@ from torch.utils.data import Dataset
 class KWSDataset(Dataset):
     keywords = ["montserrat", "pedraforca", "vermell", "blau"]
     samples_folder = "./data/keywords"
+    test_samples = 40
 
-    def __init__(self, transform=None):
+    def __init__(self, tain: bool, transform=None):
         files = []
         for i, word in enumerate(self.keywords):
             file_list = os.listdir(f"{self.samples_folder}/{word}")
             random.shuffle(file_list)
             files.append(list(map(lambda f: f"{word}/{f}", file_list)))
 
-        self.samples = list(sum(zip(*files), ()))
+        all_samples = list(sum(zip(*files), ()))
+        self.samples = all_samples[0:len(all_samples) - self.test_samples] if tain else all_samples[len(all_samples) - self.test_samples : len(all_samples)]
         self.transform = transform
 
         self.mean = -0.7344476580619812

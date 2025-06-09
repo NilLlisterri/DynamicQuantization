@@ -54,12 +54,12 @@ class Experiment:
         #     torchaudio.transforms.Spectrogram(),
         #     # lambda x: x.squeeze(0)
         # ])
-        self.train_dataset = KWSDataset(transform=transform)
-        test_dataset = KWSDataset(transform=transform)
+        self.train_dataset = KWSDataset(True, transform=transform)
+        test_dataset = KWSDataset(False, transform=transform)
         self.loss_fn = torch.nn.CrossEntropyLoss()
         self.accuracy_loss_samples = 300
         self.fl_experiment_samples_per_batch = 8
-        self.fl_experiment_batches = 20
+        self.fl_experiment_batches = 25
         # TODO: Split into traint and test
 
 
@@ -78,6 +78,7 @@ class Experiment:
     def train(self, model, rng, optimizer):
         train_loader = torch.utils.data.DataLoader(Subset(self.train_dataset, list(rng)),
                                                    **self.train_kwargs)  # Max 60k
+
         model.train()
         for batch_idx, (data, target) in enumerate(train_loader):
             data, target = data.to(self.device), target.to(self.device)
@@ -143,7 +144,7 @@ class Experiment:
         plt.savefig("plots/accuracies.png")
         print("Created plots/accuracies.png")
 
-    def fl_experiment(self, baseline: bool, quantization_bits: int):
+    def fl_experiment(self, fl: bool, quantization_bits: int, filename):
         num_models = 3
         models, optimizers = self.init_models(num_models)
         samples_per_batch = self.fl_experiment_samples_per_batch
@@ -160,7 +161,7 @@ class Experiment:
 
             x.append((batch_index + 1) * samples_per_batch)
 
-            if not baseline:
+            if not fl:
                 # Get the weights from model 1, quantize and restore them, merge them with model 0 and set them on model 0
                 weights = [self.quantize_and_restore_weights(model.get_flat_weights(), quantization_bits) for model in
                            models]
@@ -175,7 +176,7 @@ class Experiment:
         plt.ylabel("Accuracy")  # add Y-axis label
         plt.ylim(0, 100)
         plt.title("Accuracy vs epochs")
-        plt.savefig(f"plots/accuracy_vs_epochs_{'baseline' if baseline else 'experiment'}.png")
+        plt.savefig(f"plots/{filename}.png")
 
 
 def main():
@@ -191,8 +192,14 @@ def main():
 
     experiment = Experiment(args)
     experiment.accuracy_loss_experiment()
-    experiment.fl_experiment(True, 16)
-    experiment.fl_experiment(False, 16)
+
+    # experiment.fl_experiment(True, 16, 'accuracy_vs_epochs_no_fl')
+    experiment.fl_experiment(False, 32, 'accuracy_vs_epochs_32')
+    experiment.fl_experiment(False, 16, 'accuracy_vs_epochs_16')
+    experiment.fl_experiment(False, 8, 'accuracy_vs_epochs_8')
+    experiment.fl_experiment(False, 4, 'accuracy_vs_epochs_4')
+    experiment.fl_experiment(False, 2, 'accuracy_vs_epochs_2')
+    experiment.fl_experiment(False, 1, 'accuracy_vs_epochs_1')
 
 
 if __name__ == '__main__':
