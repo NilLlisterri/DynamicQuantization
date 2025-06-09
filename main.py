@@ -1,17 +1,20 @@
 import argparse
-import math
 from argparse import Namespace
 
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+import torchaudio
 from torch.utils.data import Subset
 from torchvision import datasets, transforms
-from Net import Net
+
+from KWSDataset import KWSDataset
+from Nets import MnistNet, KWSNet
 from quantization import scale_weights, descale_weights
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
+from torchaudio.transforms import MFCC
 
 class Experiment:
     def __init__(self, args: Namespace):
@@ -23,18 +26,45 @@ class Experiment:
         else:
             self.device = torch.device("cpu")
 
+        # self.net = MnistNet
+        # transform = transforms.Compose([
+        #    transforms.ToTensor(),
+        #    transforms.Normalize((0.1307,), (0.3081,))
+        # ])
+        # self.train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
+        # test_dataset = datasets.MNIST('./data', train=False, transform=transform)
+        # self.loss_fn = torch.nn.NLLLoss(reduction='sum')
+        # self.accuracy_loss_samples = 2000
+        # self.fl_experiment_samples_per_batch = 20
+        # self.fl_experiment_batches = 30
+
+        self.net = KWSNet
+        # MFCC
         transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
+            MFCC(n_mfcc=13, melkwargs={"n_mels": 32}),
+            lambda x: x.flatten(),
         ])
+        # Chunked average
+        # transform = transforms.Compose([
+        #     lambda v: v.unfold(0, 50, 50).mean(dim=1),
+        #     # transforms.Normalize(0, (0.5,))
+        # ])
+        # Spectrogram
+        # transform = transforms.Compose([
+        #     torchaudio.transforms.Spectrogram(),
+        #     # lambda x: x.squeeze(0)
+        # ])
+        self.train_dataset = KWSDataset(transform=transform)
+        test_dataset = KWSDataset(transform=transform)
+        self.loss_fn = torch.nn.CrossEntropyLoss()
+        self.accuracy_loss_samples = 300
+        self.fl_experiment_samples_per_batch = 8
+        self.fl_experiment_batches = 20
+        # TODO: Split into traint and test
 
-        self.lr = args.lr
 
-        self.train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
-        test_dataset = datasets.MNIST('./data', train=False, transform=transform)
-
-        self.train_kwargs = {'batch_size': 1, 'shuffle': True}
-        test_kwargs = {'batch_size': 1000, 'shuffle': True}
+        self.train_kwargs = {'batch_size': 1}
+        test_kwargs = {'batch_size': 1000}
         if use_accel:
             accel_kwargs = {
                 'num_workers': 1,
@@ -53,7 +83,7 @@ class Experiment:
             data, target = data.to(self.device), target.to(self.device)
             optimizer.zero_grad()
             output = model(data)
-            loss = F.nll_loss(output, target)
+            loss = self.loss_fn(output, target)
             loss.backward()
             optimizer.step()
 
@@ -65,7 +95,7 @@ class Experiment:
             for data, target in self.test_loader:
                 data, target = data.to(self.device), target.to(self.device)
                 output = model(data)
-                test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
+                test_loss += self.loss_fn(output, target).item()  # sum up batch loss
                 predicted = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                 correct += predicted.eq(target.view_as(predicted)).sum().item()
 
@@ -77,8 +107,9 @@ class Experiment:
         models = []
         optimizers = []
         for model_idx in range(count):
-            model = Net().to(self.device)
-            optimizer = optim.SGD(model.parameters(), lr=self.lr)
+            model = self.net().to(self.device)
+            # optimizer = optim.SGD(model.parameters(), lr=self.args.lr, momentum=self.args.momentum)
+            optimizer = optim.Adam(model.parameters(), lr=self.args.lr)
             models.append(model)
             optimizers.append(optimizer)
         return models, optimizers
@@ -92,12 +123,12 @@ class Experiment:
 
     def accuracy_loss_experiment(self):
         models, optimizers = self.init_models(1)
-        self.train(models[0], range(0, 2000), optimizers[0])
+        self.train(models[0], range(0, self.accuracy_loss_samples), optimizers[0])
 
         original_weights = models[0].get_flat_weights()
         scaled_weight_bits = list(range(2, 10, 1))
         accuracies = []
-        for bits in scaled_weight_bits:
+        for bits in tqdm(scaled_weight_bits):
             restored_weights = self.quantize_and_restore_weights(original_weights, bits)
             models[0].set_flat_weights(restored_weights)
             accuracy = self.test(models[0])
@@ -107,18 +138,19 @@ class Experiment:
         plt.plot(scaled_weight_bits, accuracies)
         plt.xlabel("Quantization bits")  # add X-axis label
         plt.ylabel("Accuracy")  # add Y-axis label
-        plt.ylim(0,100)
+        plt.ylim(0, 100)
         plt.title("Accuracy vs quantization bits")
         plt.savefig("plots/accuracies.png")
+        print("Created plots/accuracies.png")
 
     def fl_experiment(self, baseline: bool, quantization_bits: int):
         num_models = 3
         models, optimizers = self.init_models(num_models)
-        samples_per_batch = 20
+        samples_per_batch = self.fl_experiment_samples_per_batch
         x = [0]
         device_accuracies = [[self.test(model)] for model in models]
 
-        for batch_index in tqdm(range(30), desc="Training samples batch"):
+        for batch_index in tqdm(range(self.fl_experiment_batches), desc="Training samples batch"):
             start = batch_index * samples_per_batch * num_models
             for model_index in range(num_models):
                 first_sample = start + (samples_per_batch * model_index)
@@ -130,7 +162,8 @@ class Experiment:
 
             if not baseline:
                 # Get the weights from model 1, quantize and restore them, merge them with model 0 and set them on model 0
-                weights = [self.quantize_and_restore_weights(model.get_flat_weights(), quantization_bits) for model in models]
+                weights = [self.quantize_and_restore_weights(model.get_flat_weights(), quantization_bits) for model in
+                           models]
                 averaged_weights = np.sum(weights, axis=0) / len(models)
                 for model in models:
                     model.set_flat_weights(averaged_weights)
@@ -148,6 +181,7 @@ class Experiment:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
+    parser.add_argument('--momentum', type=float, default=0.9, help='Momentum')
     parser.add_argument('--no-accel', action='store_true', help='Disable accelerator')
     parser.add_argument('--seed', type=int, default=1, help='Random seed')
     parser.add_argument('--batch-size', type=int, default=200, help='Weights batch size')
@@ -156,8 +190,8 @@ def main():
     torch.manual_seed(args.seed)
 
     experiment = Experiment(args)
-    # experiment.accuracy_loss_experiment()
-    # experiment.fl_experiment(True, 16)
+    experiment.accuracy_loss_experiment()
+    experiment.fl_experiment(True, 16)
     experiment.fl_experiment(False, 16)
 
 
