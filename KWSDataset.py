@@ -9,9 +9,9 @@ from torch.utils.data import Dataset
 class KWSDataset(Dataset):
     keywords = ["montserrat", "pedraforca", "vermell", "blau"]
     samples_folder = "./data/keywords"
-    test_samples = 40
+    test_samples = 120
 
-    def __init__(self, tain: bool, transform=None):
+    def __init__(self, train: bool, transform=None):
         files = []
         for i, word in enumerate(self.keywords):
             file_list = os.listdir(f"{self.samples_folder}/{word}")
@@ -19,11 +19,13 @@ class KWSDataset(Dataset):
             files.append(list(map(lambda f: f"{word}/{f}", file_list)))
 
         all_samples = list(sum(zip(*files), ()))
-        self.samples = all_samples[0:len(all_samples) - self.test_samples] if tain else all_samples[len(all_samples) - self.test_samples : len(all_samples)]
+
+        begin = 0 if train else len(all_samples) - self.test_samples
+        end = len(all_samples) - self.test_samples if train else len(all_samples)
+        self.samples = all_samples[begin:end] if train else all_samples[begin:end]
+
         self.transform = transform
 
-        self.mean = -0.7344476580619812
-        self.std = 2404.997314453125
         # all_features = []
         # for i in range(0, self.__len__()):
         #     data = self.__get_raw_values__(i)
@@ -32,7 +34,8 @@ class KWSDataset(Dataset):
         #
         # self.mean = all_features_tensor.mean()
         # self.std = all_features_tensor.std()
-
+        self.mean = -0.7344476580619812
+        self.std = 2404.997314453125
 
     def __len__(self):
         return len(self.samples)

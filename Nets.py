@@ -1,7 +1,6 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-import torchvision
 from torch import Tensor
 
 
@@ -46,9 +45,15 @@ class MnistNet(Net):
 class KWSNet(Net):
     def __init__(self):
         super(KWSNet, self).__init__()
-        # self.fc1 = nn.Linear(1053, 25)
-        self.fc1 = nn.Linear(1053, 50)
-        self.fc2 = nn.Linear(50, 4)
+        self.fc1 = nn.Linear(1053, 20)
+        self.fc2 = nn.Linear(20, 4)
+
+        nn.init.uniform_(self.fc1.weight, -1, 1)
+        nn.init.uniform_(self.fc2.weight, -1, 1)
+
+        # (Optional) You may also want to initialize biases similarly
+        nn.init.uniform_(self.fc1.bias, -1, 1)
+        nn.init.uniform_(self.fc2.bias, -1, 1)
 
     def forward(self, x):
         x = self.fc1(x)

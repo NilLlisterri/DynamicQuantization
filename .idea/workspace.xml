@@ -5,17 +5,19 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="161f9b24-5496-4a9e-a672-1a51f1284692" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/plots/accuracies.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/plots/accuracy_vs_epochs_16.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/plots/accuracy_vs_epochs_32.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/plots/accuracy_vs_epochs_4.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/plots/accuracy_vs_epochs_8.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/plots/accuracy_vs_epochs_baseline.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/plots/accuracy_vs_epochs_experiment.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/KWSDataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/KWSDataset.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Nets.py" beforeDir="false" afterPath="$PROJECT_DIR$/Nets.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracies.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracy_vs_epochs_1.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracy_vs_epochs_16.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracy_vs_epochs_2.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracy_vs_epochs_32.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracy_vs_epochs_4.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracy_vs_epochs_8.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracy_vs_epochs_baseline.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plots/accuracy_vs_epochs_experiment.png" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -46,7 +48,7 @@
     "Python tests.Python tests for quantization.TestWeightScaling.test_scale_range.executor": "Run",
     "Python tests.Python tests for quantization_tests.TestWeightScaling.test_descale_boundaries.executor": "Run",
     "Python tests.Python tests for tests.quantization_tests.TestWeightScaling.test_scale_range.executor": "Run",
-    "Python.main.executor": "Debug",
+    "Python.main.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "main",
@@ -133,13 +135,6 @@
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
-      <breakpoints>
-        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
-          <url>file://$PROJECT_DIR$/Nets.py</url>
-          <line>69</line>
-          <option name="timeStamp" value="35" />
-        </line-breakpoint>
-      </breakpoints>
       <default-breakpoints>
         <breakpoint type="python-exception">
           <properties notifyOnTerminate="true" exception="BaseException">

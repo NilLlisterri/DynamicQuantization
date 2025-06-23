@@ -1,4 +1,5 @@
 import argparse
+import random
 from argparse import Namespace
 
 import torch
@@ -34,33 +35,21 @@ class Experiment:
         # self.train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
         # test_dataset = datasets.MNIST('./data', train=False, transform=transform)
         # self.loss_fn = torch.nn.NLLLoss(reduction='sum')
-        # self.accuracy_loss_samples = 2000
+        # self.accuracy_loss_experiment_samples = 2000
         # self.fl_experiment_samples_per_batch = 20
         # self.fl_experiment_batches = 30
 
         self.net = KWSNet
-        # MFCC
         transform = transforms.Compose([
             MFCC(n_mfcc=13, melkwargs={"n_mels": 32}),
             lambda x: x.flatten(),
         ])
-        # Chunked average
-        # transform = transforms.Compose([
-        #     lambda v: v.unfold(0, 50, 50).mean(dim=1),
-        #     # transforms.Normalize(0, (0.5,))
-        # ])
-        # Spectrogram
-        # transform = transforms.Compose([
-        #     torchaudio.transforms.Spectrogram(),
-        #     # lambda x: x.squeeze(0)
-        # ])
         self.train_dataset = KWSDataset(True, transform=transform)
         test_dataset = KWSDataset(False, transform=transform)
         self.loss_fn = torch.nn.CrossEntropyLoss()
-        self.accuracy_loss_samples = 300
+        self.accuracy_loss_experiment_samples = 600
         self.fl_experiment_samples_per_batch = 8
         self.fl_experiment_batches = 25
-        # TODO: Split into traint and test
 
 
         self.train_kwargs = {'batch_size': 1}
@@ -116,15 +105,17 @@ class Experiment:
         return models, optimizers
 
     def quantize_and_restore_weights(self, original_weights, quantization_bits):
+        batch_size = len(original_weights) if self.args.batch_size is None else self.args.batch_size
         restored_weights = []
-        for weights in np.array_split(original_weights, self.args.batch_size):
+        for weights in np.array_split(original_weights, range(batch_size, len(original_weights), batch_size)):
             min_w, max_w, scaled_weights = scale_weights(weights.tolist(), quantization_bits)
             restored_weights += descale_weights(scaled_weights, quantization_bits, min_w, max_w)
         return restored_weights
 
-    def accuracy_loss_experiment(self):
+    def accuracy_loss_experiment(self, filename: str):
         models, optimizers = self.init_models(1)
-        self.train(models[0], range(0, self.accuracy_loss_samples), optimizers[0])
+        self.train(models[0], range(0, self.accuracy_loss_experiment_samples), optimizers[0])
+        original_accuracy = self.test(models[0])
 
         original_weights = models[0].get_flat_weights()
         scaled_weight_bits = list(range(2, 10, 1))
@@ -139,12 +130,12 @@ class Experiment:
         plt.plot(scaled_weight_bits, accuracies)
         plt.xlabel("Quantization bits")  # add X-axis label
         plt.ylabel("Accuracy")  # add Y-axis label
-        plt.ylim(0, 100)
-        plt.title("Accuracy vs quantization bits")
-        plt.savefig("plots/accuracies.png")
-        print("Created plots/accuracies.png")
+        plt.ylim(-5, 105)
+        plt.title("Accuracy drop vs quantization bits")
+        plt.savefig(f"plots/{filename}.png")
+        print(f"Generated plots/{filename}.png")
 
-    def fl_experiment(self, fl: bool, quantization_bits: int, filename):
+    def fl_experiment(self, fl: bool, quantization_bits: int|None, filename):
         num_models = 3
         models, optimizers = self.init_models(num_models)
         samples_per_batch = self.fl_experiment_samples_per_batch
@@ -162,9 +153,9 @@ class Experiment:
             x.append((batch_index + 1) * samples_per_batch)
 
             if not fl:
-                # Get the weights from model 1, quantize and restore them, merge them with model 0 and set them on model 0
-                weights = [self.quantize_and_restore_weights(model.get_flat_weights(), quantization_bits) for model in
-                           models]
+                weights = [
+                    self.quantize_and_restore_weights(model.get_flat_weights(), quantization_bits) for model in models
+                ]
                 averaged_weights = np.sum(weights, axis=0) / len(models)
                 for model in models:
                     model.set_flat_weights(averaged_weights)
@@ -185,21 +176,24 @@ def main():
     parser.add_argument('--momentum', type=float, default=0.9, help='Momentum')
     parser.add_argument('--no-accel', action='store_true', help='Disable accelerator')
     parser.add_argument('--seed', type=int, default=1, help='Random seed')
-    parser.add_argument('--batch-size', type=int, default=200, help='Weights batch size')
+    parser.add_argument('--batch-size', type=int, default=None, help='Weights batch size')
     args = parser.parse_args()
 
+    random.seed(args.seed)
+    np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     experiment = Experiment(args)
-    experiment.accuracy_loss_experiment()
+    experiment.accuracy_loss_experiment('accuracies')
 
-    # experiment.fl_experiment(True, 16, 'accuracy_vs_epochs_no_fl')
+    experiment.fl_experiment(True, None, 'accuracy_vs_epochs_no_fl')
     experiment.fl_experiment(False, 32, 'accuracy_vs_epochs_32')
     experiment.fl_experiment(False, 16, 'accuracy_vs_epochs_16')
     experiment.fl_experiment(False, 8, 'accuracy_vs_epochs_8')
     experiment.fl_experiment(False, 4, 'accuracy_vs_epochs_4')
     experiment.fl_experiment(False, 2, 'accuracy_vs_epochs_2')
     experiment.fl_experiment(False, 1, 'accuracy_vs_epochs_1')
+
 
 
 if __name__ == '__main__':
