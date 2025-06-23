@@ -17,6 +17,7 @@ import numpy as np
 from tqdm import tqdm
 from torchaudio.transforms import MFCC
 
+
 class Experiment:
     def __init__(self, args: Namespace):
         self.args = args
@@ -47,10 +48,9 @@ class Experiment:
         self.train_dataset = KWSDataset(True, transform=transform)
         test_dataset = KWSDataset(False, transform=transform)
         self.loss_fn = torch.nn.CrossEntropyLoss()
-        self.accuracy_loss_experiment_samples = 600
-        self.fl_experiment_samples_per_batch = 8
-        self.fl_experiment_batches = 25
-
+        self.accuracy_loss_experiment_samples = 200
+        self.fl_experiment_samples_per_batch = 4
+        self.fl_experiment_batches = 50
 
         self.train_kwargs = {'batch_size': 1}
         test_kwargs = {'batch_size': 1000}
@@ -135,7 +135,7 @@ class Experiment:
         plt.savefig(f"plots/{filename}.png")
         print(f"Generated plots/{filename}.png")
 
-    def fl_experiment(self, fl: bool, quantization_bits: int|None, filename):
+    def fl_experiment(self, fl: bool, quantization_bits: int | None, filename):
         num_models = 3
         models, optimizers = self.init_models(num_models)
         samples_per_batch = self.fl_experiment_samples_per_batch
@@ -152,11 +152,19 @@ class Experiment:
 
             x.append((batch_index + 1) * samples_per_batch)
 
-            if not fl:
-                weights = [
-                    self.quantize_and_restore_weights(model.get_flat_weights(), quantization_bits) for model in models
-                ]
+            if fl:
+                if quantization_bits is not None:
+                    weights = [
+                        self.quantize_and_restore_weights(model.get_flat_weights(), quantization_bits) for model in
+                        models
+                    ]
+                else:
+                    weights = [
+                        model.get_flat_weights() for model in models
+                    ]
                 averaged_weights = np.sum(weights, axis=0) / len(models)
+                if quantization_bits is not None:
+                    averaged_weights = self.quantize_and_restore_weights(averaged_weights, quantization_bits)
                 for model in models:
                     model.set_flat_weights(averaged_weights)
 
@@ -175,25 +183,41 @@ def main():
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
     parser.add_argument('--momentum', type=float, default=0.9, help='Momentum')
     parser.add_argument('--no-accel', action='store_true', help='Disable accelerator')
-    parser.add_argument('--seed', type=int, default=1, help='Random seed')
+    parser.add_argument('--seed', type=int, default=2, help='Random seed')
     parser.add_argument('--batch-size', type=int, default=None, help='Weights batch size')
     args = parser.parse_args()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    torch_state = torch.random.get_rng_state()
+    numpy_state = np.random.get_state()
+    random_state = random.getstate()
+    def reset_state():
+        torch.random.set_rng_state(torch_state)
+        np.random.set_state(numpy_state)
+        random.setstate(random_state)
 
     experiment = Experiment(args)
-    experiment.accuracy_loss_experiment('accuracies')
 
-    experiment.fl_experiment(True, None, 'accuracy_vs_epochs_no_fl')
-    experiment.fl_experiment(False, 32, 'accuracy_vs_epochs_32')
-    experiment.fl_experiment(False, 16, 'accuracy_vs_epochs_16')
-    experiment.fl_experiment(False, 8, 'accuracy_vs_epochs_8')
-    experiment.fl_experiment(False, 4, 'accuracy_vs_epochs_4')
-    experiment.fl_experiment(False, 2, 'accuracy_vs_epochs_2')
-    experiment.fl_experiment(False, 1, 'accuracy_vs_epochs_1')
+    experiment.accuracy_loss_experiment('accuracy_vs_quantization_bits')
 
+    reset_state()
+    experiment.fl_experiment(False, None, 'accuracy_vs_epochs_no_fl')
+    reset_state()
+    experiment.fl_experiment(True, None, 'accuracy_vs_epochs_no_quantization')
+    reset_state()
+    experiment.fl_experiment(True, 32, 'accuracy_vs_epochs_32')
+    reset_state()
+    experiment.fl_experiment(True, 16, 'accuracy_vs_epochs_16')
+    reset_state()
+    experiment.fl_experiment(True, 8, 'accuracy_vs_epochs_8')
+    reset_state()
+    experiment.fl_experiment(True, 4, 'accuracy_vs_epochs_4')
+    reset_state()
+    experiment.fl_experiment(True, 2, 'accuracy_vs_epochs_2')
+    reset_state()
+    experiment.fl_experiment(True, 1, 'accuracy_vs_epochs_1')
 
 
 if __name__ == '__main__':
