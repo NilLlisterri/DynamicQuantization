@@ -229,8 +229,8 @@ class Experiment:
         options = [
             {'label': 'Fixed low quantization', 'bits': lambda i, nb: low_bits, 'color': 'r--'},
             {'label': 'Fixed high quantization', 'bits': lambda i, nb: high_bits, 'color': 'g--'},
-            {'label': 'Early quantization', 'bits': lambda i, nb: high_bits if i <= nb / 3 else low_bits, 'color': 'b-'},
-            {'label': 'Late quantization', 'bits': lambda i, nb: low_bits if i <= nb / 3 else high_bits, 'color': 'm-'},
+            {'label': f"Late quantization ({high_bits} → {low_bits})", 'bits': lambda i, nb: high_bits if i <= nb / 3 else low_bits, 'color': 'b-'},
+            {'label': f"Early quantization ({low_bits} → {high_bits})", 'bits': lambda i, nb: low_bits if i <= nb / 3 else high_bits, 'color': 'm-'},
         ]
         for case in options:
             self.reset_state()
