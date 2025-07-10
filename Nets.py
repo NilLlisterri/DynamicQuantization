@@ -43,10 +43,10 @@ class MnistNet(Net):
 
 
 class KWSNet(Net):
-    def __init__(self):
+    def __init__(self, hl_size: int):
         super(KWSNet, self).__init__()
-        self.fc1 = nn.Linear(1053, 20)
-        self.fc2 = nn.Linear(20, 4)
+        self.fc1 = nn.Linear(1053, hl_size)
+        self.fc2 = nn.Linear(hl_size, 4)
 
         nn.init.uniform_(self.fc1.weight, -1, 1)
         nn.init.uniform_(self.fc2.weight, -1, 1)

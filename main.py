@@ -11,12 +11,15 @@ from torchvision import datasets, transforms
 
 from KWSDataset import KWSDataset
 from Nets import MnistNet, KWSNet
-from quantization import scale_weights, descale_weights
+from quantization import scale_weights, descale_weights, get_scale_range
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 from torchaudio.transforms import MFCC
+from collections.abc import Callable
+from typing import TypeAlias
 
+BitsFn: TypeAlias = str | Callable[[int, int], int|None]
 
 class Experiment:
     def __init__(self, args: Namespace):
@@ -105,11 +108,11 @@ class Experiment:
         accuracy = 100. * correct / len(self.test_loader.dataset)
         return accuracy
 
-    def init_models(self, count):
+    def init_models(self, count, net_kwargs):
         models = []
         optimizers = []
         for model_idx in range(count):
-            model = self.net().to(self.device)
+            model = self.net(**net_kwargs).to(self.device)
             # optimizer = optim.SGD(model.parameters(), lr=self.args.lr, momentum=self.args.momentum)
             optimizer = optim.Adam(model.parameters(), lr=self.args.lr)
             models.append(model)
@@ -124,26 +127,37 @@ class Experiment:
             restored_weights += descale_weights(scaled_weights, quantization_bits, min_w, max_w)
         return restored_weights
 
-    def do_fl(self, models, bits: int | None):
-        if bits is not None:
-            weights = [self.quantize_and_restore_weights(model.get_flat_weights(), bits) for model in models]
+    def quantize_weights(self, weights, quantization_bits):
+        batch_size = len(weights) if self.args.batch_size is None else self.args.batch_size
+        quantized_weights = []
+        for weights in np.array_split(weights, range(batch_size, len(weights), batch_size)):
+            min_w, max_w, scaled_weights = scale_weights(weights.tolist(), quantization_bits)
+            quantized_weights.extend(scaled_weights)
+        return quantized_weights
+
+    def do_fl(self, models, send_bits: int | None, receive_bits: int | None | str = 'unset'):
+        if receive_bits == 'unset':
+            receive_bits = send_bits
+
+        if send_bits is not None:
+            weights = [self.quantize_and_restore_weights(model.get_flat_weights(), send_bits) for model in models]
         else:
             weights = [model.get_flat_weights() for model in models]
         averaged_weights = np.sum(weights, axis=0) / len(models)
-        if bits is not None:
-            averaged_weights = self.quantize_and_restore_weights(averaged_weights, bits)
+        if receive_bits is not None:
+            averaged_weights = self.quantize_and_restore_weights(averaged_weights, receive_bits)
 
         for model in models: model.set_flat_weights(averaged_weights)
 
-    def accuracy_loss_experiment(self, filename: str):
+    def accuracy_loss_experiment(self):
         self.reset_state()
 
-        models, optimizers = self.init_models(1)
+        models, optimizers = self.init_models(1, {'hl_size': 20})
         self.train(models[0], range(0, self.accuracy_loss_experiment_samples), optimizers[0])
-        original_accuracy = self.test(models[0])
+        # original_accuracy = self.test(models[0])
 
         original_weights = models[0].get_flat_weights()
-        scaled_weight_bits = list(range(2, 10, 1))
+        scaled_weight_bits = list(range(1, 10, 1))
         accuracies = []
         for bits in tqdm(scaled_weight_bits):
             restored_weights = self.quantize_and_restore_weights(original_weights, bits)
@@ -157,8 +171,25 @@ class Experiment:
         plt.ylabel("Accuracy")  # add Y-axis label
         plt.ylim(-5, 105)
         plt.title("Accuracy drop vs quantization bits")
-        plt.savefig(f"plots/{filename}.png")
-        print(f"Generated plots/{filename}.png")
+        plt.savefig(f"plots/accuracy_loss.png")
+
+    def batch_training(self, models, optimizers, send_bits_fn: BitsFn, do_fl: bool = True, receive_bits_fn: BitsFn|str = 'unset'):
+        if receive_bits_fn == 'unset': receive_bits_fn = send_bits_fn
+
+        x = [0]
+        accuracies = [sum(self.test(model) for model in models) / len(models)]
+        for batch_index in tqdm(range(self.fl_batches), desc="Training samples batch"):
+            start = batch_index * self.samples_per_fl_batch * len(models)
+            for model_index in range(len(models)):
+                first_sample = start + (self.samples_per_fl_batch * model_index)
+                last_sample = start + (self.samples_per_fl_batch * (model_index + 1))
+                self.train(models[model_index], range(first_sample, last_sample), optimizers[model_index])
+
+            x.append((batch_index + 1) * self.samples_per_fl_batch)
+            if do_fl: self.do_fl(models, send_bits_fn(batch_index, self.fl_batches), receive_bits_fn(batch_index, self.fl_batches))
+            accuracies.append(self.test(models[0]))
+
+        return x, accuracies
 
     def accuracy_vs_epochs_vs_quant_bits_experiment(self, num_models):
         plt.figure()
@@ -168,39 +199,25 @@ class Experiment:
         plt.title("Accuracy vs epochs")
 
         options = [
-            {'fl': False, 'quantization_bits': None, 'label': 'No FL', 'color': 'b'},
-            {'fl': True, 'quantization_bits': None, 'label': 'FL no quantization', 'color': 'r'},
-            {'fl': True, 'quantization_bits': 16, 'label': '16 bits', 'color': 'c--'},
-            {'fl': True, 'quantization_bits': 8, 'label': '8 bits', 'color': 'm'},
-            {'fl': True, 'quantization_bits': 6, 'label': '6 bits', 'color': 'g'},
-            {'fl': True, 'quantization_bits': 5, 'label': '5 bits', 'color': 'brown'},
-            {'fl': True, 'quantization_bits': 4, 'label': '4 bits', 'color': 'y'},
-            {'fl': True, 'quantization_bits': 3, 'label': '3 bits', 'color': 'limegreen'},
-            {'fl': True, 'quantization_bits': 2, 'label': '2 bits', 'color': 'k'},
+            {'do_fl': False, 'bits': None, 'label': 'No FL', 'color': 'b'},
+            {'do_fl': True, 'bits': None, 'label': 'FL no quantization', 'color': 'r'},
+            {'do_fl': True, 'bits': 16, 'label': '16 bits', 'color': 'c--'},
+            {'do_fl': True, 'bits': 8, 'label': '8 bits', 'color': 'm'},
+            {'do_fl': True, 'bits': 6, 'label': '6 bits', 'color': 'g'},
+            {'do_fl': True, 'bits': 5, 'label': '5 bits', 'color': 'brown'},
+            {'do_fl': True, 'bits': 4, 'label': '4 bits', 'color': 'y'},
+            {'do_fl': True, 'bits': 3, 'label': '3 bits', 'color': 'limegreen'},
+            {'do_fl': True, 'bits': 2, 'label': '2 bits', 'color': 'k'},
         ]
 
         for case in options:
             self.reset_state()
-
-            models, optimizers = self.init_models(num_models)
-            x = [0]
-            accuracies = [sum(self.test(model) for model in models) / len(models)]
-
-            for batch_index in tqdm(range(self.fl_batches), desc="Training samples batch"):
-                start = batch_index * self.samples_per_fl_batch * num_models
-                for model_index in range(num_models):
-                    first_sample = start + (self.samples_per_fl_batch * model_index)
-                    last_sample = start + (self.samples_per_fl_batch * (model_index + 1))
-                    self.train(models[model_index], range(first_sample, last_sample), optimizers[model_index])
-
-                x.append((batch_index + 1) * self.samples_per_fl_batch)
-                if case['fl']: self.do_fl(models, case['quantization_bits'])
-                accuracies.append(self.test(models[0]))
-
+            models, optimizers = self.init_models(num_models, {'hl_size': 20})
+            x, accuracies = self.batch_training(models, optimizers, lambda i, nb: case['bits'], do_fl=case['do_fl'])
             plt.plot(x, accuracies, case['color'], label=case['label'])
 
         plt.legend()
-        plt.savefig(f"plots/accuracy_vs_epochs_vs_quant_bits_experiment.png")
+        plt.savefig(f"plots/accuracy_vs_epochs_vs_quant_bits.png")
 
     def early_vs_late_quantization(self, num_models: int, low_bits: int, high_bits: int):
         plt.figure()
@@ -210,35 +227,53 @@ class Experiment:
         plt.title("Early vs late quantization")
 
         options = [
-            {'label': 'Fixed low quantization', 'bits': lambda i: low_bits, 'color': 'r--'},
-            {'label': 'Fixed high quantization', 'bits': lambda i: high_bits, 'color': 'g--'},
-            {'label': 'Early quantization', 'bits': lambda i: high_bits if i <= self.fl_batches / 3 else low_bits, 'color': 'b-'},
-            {'label': 'Late quantization', 'bits': lambda i: low_bits if i <= self.fl_batches / 3 else high_bits, 'color': 'm-'},
+            {'label': 'Fixed low quantization', 'bits': lambda i, nb: low_bits, 'color': 'r--'},
+            {'label': 'Fixed high quantization', 'bits': lambda i, nb: high_bits, 'color': 'g--'},
+            {'label': 'Early quantization', 'bits': lambda i, nb: high_bits if i <= nb / 3 else low_bits, 'color': 'b-'},
+            {'label': 'Late quantization', 'bits': lambda i, nb: low_bits if i <= nb / 3 else high_bits, 'color': 'm-'},
         ]
         for case in options:
             self.reset_state()
-
-            models, optimizers = self.init_models(num_models)
-            samples_per_batch = self.samples_per_fl_batch
-            x = [0]
-            accuracies = [sum(self.test(model) for model in models) / len(models)]
-
-            for batch_index in tqdm(range(self.fl_batches), desc="Training samples batch"):
-                start = batch_index * samples_per_batch * num_models
-                for model_index in range(num_models):
-                    first_sample = start + (samples_per_batch * model_index)
-                    last_sample = start + (samples_per_batch * (model_index + 1))
-                    self.train(models[model_index], range(first_sample, last_sample), optimizers[model_index])
-
-                x.append((batch_index + 1) * samples_per_batch)
-                bits = case['bits'](batch_index)
-                self.do_fl(models, bits)
-                accuracies.append(self.test(models[0]))
-
+            models, optimizers = self.init_models(num_models, {'hl_size': 20})
+            x, accuracies = self.batch_training(models, optimizers, case['bits'])
             plt.plot(x, accuracies, case['color'], label=case['label'])
 
         plt.legend()
         plt.savefig(f"plots/early_vs_late_quantization.png")
+
+    def quantized_weights_histogram_experiment(self, num_models):
+        self.reset_state()
+        models, optimizers = self.init_models(num_models, {'hl_size': 20})
+        self.batch_training(models, optimizers, lambda i, nb: None)
+
+        fig, axs = plt.subplots(1, 3, tight_layout=True, figsize=(9, 3))
+
+        original_weights = models[0].get_flat_weights()
+        for i, bits in enumerate([8, 6, 4]):
+            weights = self.quantize_weights(original_weights, bits)
+            axs[i].hist(weights, bins=int(get_scale_range(bits)[1]))
+
+        plt.savefig(f"plots/quantized_weights_histogram.png")
+
+    def asymmetric_quantization_experiment(self, num_models):
+        plt.figure()
+        plt.xlabel("Epoch")
+        plt.ylabel("Accuracy")
+        plt.ylim(0, 100)
+        plt.title("Symmetric vs Asymmetric quantization")
+
+        options = [
+            {'label': 'Symmetric quantization', 'send_bits': 8, 'receive_bits': 8, 'color': 'r--'},
+            {'label': 'Asymmetric quantization', 'send_bits': 8, 'receive_bits': 6, 'color': 'g--'},
+        ]
+        for case in options:
+            self.reset_state()
+            models, optimizers = self.init_models(num_models, {'hl_size': 20})
+            x, accuracies = self.batch_training(models, optimizers, lambda i, nb: case['send_bits'], receive_bits_fn=lambda i, nb: case['receive_bits'])
+            plt.plot(x, accuracies, case['color'], label=case['label'])
+        plt.legend()
+        plt.savefig(f"plots/asymmetric_quantization.png")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -251,10 +286,11 @@ def main():
 
     experiment = Experiment(args)
 
-    # experiment.accuracy_loss_experiment('accuracy_vs_quantization_bits')
-    #experiment.accuracy_vs_epochs_vs_quant_bits_experiment(3)
+    experiment.accuracy_loss_experiment()
+    experiment.accuracy_vs_epochs_vs_quant_bits_experiment(3)
     experiment.early_vs_late_quantization(3, 6, 8)
-
+    experiment.quantized_weights_histogram_experiment(3)
+    experiment.asymmetric_quantization_experiment(3)
 
 if __name__ == '__main__':
     main()
