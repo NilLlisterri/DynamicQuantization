@@ -255,7 +255,7 @@ class Experiment:
 
         plt.savefig(f"plots/quantized_weights_histogram.png")
 
-    def asymmetric_quantization_experiment(self, num_models):
+    def asymmetric_quantization_experiment(self, num_models: int):
         plt.figure()
         plt.xlabel("Epoch")
         plt.ylabel("Accuracy")
@@ -274,6 +274,24 @@ class Experiment:
         plt.legend()
         plt.savefig(f"plots/asymmetric_quantization.png")
 
+    def random_quantization_experiment(self, num_models: int):
+        plt.figure()
+        plt.xlabel("Epoch")
+        plt.ylabel("Accuracy")
+        plt.ylim(0, 100)
+        plt.title("Random quantization")
+
+        options = [
+            {'label': 'Fixed 8-bit quantization', 'bits': lambda i, nb: 8, 'color': 'r--'},
+            {'label': 'Random quantization', 'bits': lambda i, nb: random.randint(5, 12), 'color': 'g--'},
+        ]
+        for case in options:
+            self.reset_state()
+            models, optimizers = self.init_models(num_models, {'hl_size': 20})
+            x, accuracies = self.batch_training(models, optimizers, case['bits'])
+            plt.plot(x, accuracies, case['color'], label=case['label'])
+        plt.legend()
+        plt.savefig(f"plots/random_quantization.png")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -291,6 +309,7 @@ def main():
     experiment.early_vs_late_quantization(3, 6, 8)
     experiment.quantized_weights_histogram_experiment(3)
     experiment.asymmetric_quantization_experiment(3)
+    experiment.random_quantization_experiment(3)
 
 if __name__ == '__main__':
     main()
