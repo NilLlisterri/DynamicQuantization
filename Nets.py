@@ -43,7 +43,7 @@ class MnistNet(Net):
 
 
 class KWSNet(Net):
-    def __init__(self, hl_size: int):
+    def __init__(self, hl_size: int = 20):
         super(KWSNet, self).__init__()
         self.fc1 = nn.Linear(1053, hl_size)
         self.fc2 = nn.Linear(hl_size, 4)

@@ -3,9 +3,7 @@ import random
 from argparse import Namespace
 
 import torch
-import torch.nn.functional as F
 import torch.optim as optim
-import torchaudio
 from torch.utils.data import Subset
 from torchvision import datasets, transforms
 
@@ -19,7 +17,8 @@ from torchaudio.transforms import MFCC
 from collections.abc import Callable
 from typing import TypeAlias
 
-BitsFn: TypeAlias = str | Callable[[int, int], int|None]
+BitsFn: TypeAlias = str | Callable[[int, int], int | None]
+
 
 class Experiment:
     def __init__(self, args: Namespace):
@@ -51,12 +50,15 @@ class Experiment:
         # self.fl_experiment_batches = 30
 
         self.net = KWSNet
-        transform = transforms.Compose([
-            MFCC(n_mfcc=13, melkwargs={"n_mels": 32}),
+        self.dataset_transform = transforms.Compose([
+            MFCC(n_mfcc=13, melkwargs={
+                "n_mels": 32,
+                "hop_length": 200  # Default 200, increases accuracy but requires a larger input layer
+            }),
             lambda x: x.flatten(),
         ])
-        self.train_dataset = KWSDataset(True, transform=transform)
-        test_dataset = KWSDataset(False, transform=transform)
+        self.train_dataset_iid = KWSDataset(True, transform=self.dataset_transform, iid=True)
+        test_dataset = KWSDataset(False, transform=self.dataset_transform)
         self.loss_fn = torch.nn.CrossEntropyLoss()
         self.accuracy_loss_experiment_samples = 200
         self.samples_per_fl_batch = 4
@@ -79,9 +81,11 @@ class Experiment:
         np.random.set_state(self.numpy_state)
         random.setstate(self.random_state)
 
-    def train(self, model, rng, optimizer):
-        train_loader = torch.utils.data.DataLoader(Subset(self.train_dataset, list(rng)),
-                                                   **self.train_kwargs)  # Max 60k
+    def train(self, model, rng, optimizer, dataset):
+        train_loader = torch.utils.data.DataLoader(
+            Subset(dataset, list(rng)),
+            **self.train_kwargs
+        )
 
         model.train()
         for batch_idx, (data, target) in enumerate(train_loader):
@@ -153,7 +157,7 @@ class Experiment:
         self.reset_state()
 
         models, optimizers = self.init_models(1, {'hl_size': 20})
-        self.train(models[0], range(0, self.accuracy_loss_experiment_samples), optimizers[0])
+        self.train(models[0], range(0, self.accuracy_loss_experiment_samples), optimizers[0], self.train_dataset_iid)
         # original_accuracy = self.test(models[0])
 
         original_weights = models[0].get_flat_weights()
@@ -173,7 +177,8 @@ class Experiment:
         plt.title("Accuracy drop vs quantization bits")
         plt.savefig(f"plots/accuracy_loss.png")
 
-    def batch_training(self, models, optimizers, send_bits_fn: BitsFn, do_fl: bool = True, receive_bits_fn: BitsFn|str = 'unset'):
+    def batch_training(self, models, optimizers, send_bits_fn: BitsFn, dataset, do_fl: bool = True,
+                       receive_bits_fn: BitsFn | str = 'unset'):
         if receive_bits_fn == 'unset': receive_bits_fn = send_bits_fn
 
         x = [0]
@@ -183,11 +188,16 @@ class Experiment:
             for model_index in range(len(models)):
                 first_sample = start + (self.samples_per_fl_batch * model_index)
                 last_sample = start + (self.samples_per_fl_batch * (model_index + 1))
-                self.train(models[model_index], range(first_sample, last_sample), optimizers[model_index])
+                self.train(models[model_index], range(first_sample, last_sample), optimizers[model_index], dataset)
 
             x.append((batch_index + 1) * self.samples_per_fl_batch)
-            if do_fl: self.do_fl(models, send_bits_fn(batch_index, self.fl_batches), receive_bits_fn(batch_index, self.fl_batches))
-            accuracies.append(self.test(models[0]))
+            if do_fl:
+                self.do_fl(models, send_bits_fn(batch_index, self.fl_batches),
+                           receive_bits_fn(batch_index, self.fl_batches))
+                accuracy = self.test(models[0])
+            else:
+                accuracy = sum([self.test(model) for model in models]) / len(models)
+            accuracies.append(accuracy)
 
         return x, accuracies
 
@@ -195,12 +205,12 @@ class Experiment:
         plt.figure()
         plt.xlabel("Epoch")
         plt.ylabel("Accuracy")
-        plt.ylim(0, 100)
+        plt.ylim(top=100, bottom=15)
         plt.title("Accuracy vs epochs")
 
         options = [
             {'do_fl': False, 'bits': None, 'label': 'No FL', 'color': 'b'},
-            {'do_fl': True, 'bits': None, 'label': 'FL no quantization', 'color': 'r'},
+            {'do_fl': True, 'bits': None, 'label': 'No quant', 'color': 'r'},
             {'do_fl': True, 'bits': 16, 'label': '16 bits', 'color': 'c--'},
             {'do_fl': True, 'bits': 8, 'label': '8 bits', 'color': 'm'},
             {'do_fl': True, 'bits': 6, 'label': '6 bits', 'color': 'g'},
@@ -213,10 +223,10 @@ class Experiment:
         for case in options:
             self.reset_state()
             models, optimizers = self.init_models(num_models, {'hl_size': 20})
-            x, accuracies = self.batch_training(models, optimizers, lambda i, nb: case['bits'], do_fl=case['do_fl'])
+            x, accuracies = self.batch_training(models, optimizers, lambda i, nb: case['bits'], self.train_dataset_iid, do_fl=case['do_fl'])
             plt.plot(x, accuracies, case['color'], label=case['label'])
 
-        plt.legend()
+        plt.legend(loc='center right')
         plt.savefig(f"plots/accuracy_vs_epochs_vs_quant_bits.png")
 
     def early_vs_late_quantization(self, num_models: int, low_bits: int, high_bits: int):
@@ -227,15 +237,15 @@ class Experiment:
         plt.title("Early vs late quantization")
 
         options = [
-            {'label': 'Fixed low quantization', 'bits': lambda i, nb: low_bits, 'color': 'r--'},
-            {'label': 'Fixed high quantization', 'bits': lambda i, nb: high_bits, 'color': 'g--'},
-            {'label': f"Late quantization ({high_bits} → {low_bits})", 'bits': lambda i, nb: high_bits if i <= nb / 3 else low_bits, 'color': 'b-'},
+            {'label': 'Fixed high quantization (6)', 'bits': lambda i, nb: low_bits, 'color': 'r--'},
+            {'label': 'Fixed low quantization (8)', 'bits': lambda i, nb: high_bits, 'color': 'g--'},
             {'label': f"Early quantization ({low_bits} → {high_bits})", 'bits': lambda i, nb: low_bits if i <= nb / 3 else high_bits, 'color': 'm-'},
+            {'label': f"Late quantization ({high_bits} → {low_bits})", 'bits': lambda i, nb: high_bits if i <= nb / 3 else low_bits, 'color': 'b-'},
         ]
         for case in options:
             self.reset_state()
             models, optimizers = self.init_models(num_models, {'hl_size': 20})
-            x, accuracies = self.batch_training(models, optimizers, case['bits'])
+            x, accuracies = self.batch_training(models, optimizers, case['bits'], self.train_dataset_iid)
             plt.plot(x, accuracies, case['color'], label=case['label'])
 
         plt.legend()
@@ -244,7 +254,7 @@ class Experiment:
     def quantized_weights_histogram_experiment(self, num_models):
         self.reset_state()
         models, optimizers = self.init_models(num_models, {'hl_size': 20})
-        self.batch_training(models, optimizers, lambda i, nb: None)
+        self.batch_training(models, optimizers, lambda i, nb: None, self.train_dataset_iid)
 
         fig, axs = plt.subplots(1, 3, tight_layout=True, figsize=(9, 3))
 
@@ -263,13 +273,15 @@ class Experiment:
         plt.title("Symmetric vs Asymmetric quantization")
 
         options = [
-            {'label': 'Symmetric quantization', 'send_bits': 8, 'receive_bits': 8, 'color': 'r--'},
-            {'label': 'Asymmetric quantization', 'send_bits': 8, 'receive_bits': 6, 'color': 'g--'},
+            {'label': 'Symmetric quantization (8)', 'send_bits': 8, 'receive_bits': 8, 'color': 'r--'},
+            {'label': 'Asymmetric quantization (8 → 6)', 'send_bits': 8, 'receive_bits': 6, 'color': 'g--'},
+            {'label': 'Asymmetric quantization (6 → 8)', 'send_bits': 6, 'receive_bits': 8, 'color': 'b--'},
         ]
         for case in options:
             self.reset_state()
             models, optimizers = self.init_models(num_models, {'hl_size': 20})
-            x, accuracies = self.batch_training(models, optimizers, lambda i, nb: case['send_bits'], receive_bits_fn=lambda i, nb: case['receive_bits'])
+            x, accuracies = self.batch_training(models, optimizers, lambda i, nb: case['send_bits'], self.train_dataset_iid,
+                                                receive_bits_fn=lambda i, nb: case['receive_bits'])
             plt.plot(x, accuracies, case['color'], label=case['label'])
         plt.legend()
         plt.savefig(f"plots/asymmetric_quantization.png")
@@ -283,15 +295,71 @@ class Experiment:
 
         options = [
             {'label': 'Fixed 8-bit quantization', 'bits': lambda i, nb: 8, 'color': 'r--'},
-            {'label': 'Random quantization', 'bits': lambda i, nb: random.randint(5, 12), 'color': 'g--'},
+            {'label': 'Random quantization (5-8 bits)', 'bits': lambda i, nb: random.randint(5, 8), 'color': 'g'},
+            {'label': 'Random quantization (6-8 bits)', 'bits': lambda i, nb: random.randint(6, 8), 'color': 'b'},
         ]
         for case in options:
             self.reset_state()
             models, optimizers = self.init_models(num_models, {'hl_size': 20})
-            x, accuracies = self.batch_training(models, optimizers, case['bits'])
+            x, accuracies = self.batch_training(models, optimizers, case['bits'], self.train_dataset_iid)
             plt.plot(x, accuracies, case['color'], label=case['label'])
         plt.legend()
         plt.savefig(f"plots/random_quantization.png")
+
+    def nn_size_experiment(self, num_models: int):
+        plt.figure()
+        plt.ylabel("Accuracy")
+        plt.ylim(0, 100)
+        plt.title("Final accuracy depending on HL size and quantization bits")
+
+        for y in range(0, 100, 5):
+            plt.axhline(y=y, color="#EEE", zorder=1)
+
+        quantization_bits = [16, 8, 6, 5]
+        hl_sizes = [10, 15, 20, 25]
+
+        width, x = 0.15, np.arange(len(quantization_bits))
+        for i, hl_size in enumerate(hl_sizes):
+            accuracies = []
+            for bits in quantization_bits:
+                self.reset_state()
+                models, optimizers = self.init_models(num_models, {'hl_size': hl_size})
+                _, acc = self.batch_training(models, optimizers, lambda i, nb: bits, self.train_dataset_iid)
+                accuracies.append(acc[-1])
+            plt.bar(x + (width * i), accuracies, width, label=f"{hl_size} neurons", zorder=2)
+
+        plt.xticks(x + (width * len(hl_sizes) / 2), [f"{bits} bits" for bits in quantization_bits])
+
+        plt.legend(loc='upper right')
+        plt.savefig(f"plots/nn_size.png")
+
+    def iid_vs_non_experiment(self, num_models: int):
+        plt.figure()
+        plt.xlabel("Epoch")
+        plt.ylabel("Accuracy")
+        plt.ylim(top=100, bottom=15)
+        plt.title("Accuracy vs epochs")
+
+        train_dataset_non_iid_2 = KWSDataset(True, transform=self.dataset_transform, iid=2)
+        train_dataset_non_iid_3 = KWSDataset(True, transform=self.dataset_transform, iid=3)
+        train_dataset_non_iid_4 = KWSDataset(True, transform=self.dataset_transform, iid=4)
+
+        options = [
+            {'dataset': self.train_dataset_iid, 'bits': None, 'label': 'IID', 'color': 'r--'},
+            {'dataset': train_dataset_non_iid_2, 'bits': None, 'label': 'Non-IID 2', 'color': 'g'},
+            {'dataset': train_dataset_non_iid_3, 'bits': None, 'label': 'Non-IID 3', 'color': 'b'},
+            {'dataset': train_dataset_non_iid_4, 'bits': None, 'label': 'Non-IID 4', 'color': 'm'},
+        ]
+
+        for case in options:
+            self.reset_state()
+            models, optimizers = self.init_models(num_models, {'hl_size': 20})
+            x, accuracies = self.batch_training(models, optimizers, lambda i, nb: 8, case['dataset'])
+            plt.plot(x, accuracies, case['color'], label=case['label'])
+
+        plt.legend()
+        plt.savefig(f"plots/iid_vs_non.png")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -310,6 +378,9 @@ def main():
     experiment.quantized_weights_histogram_experiment(3)
     experiment.asymmetric_quantization_experiment(3)
     experiment.random_quantization_experiment(3)
+    experiment.nn_size_experiment(3)
+    experiment.iid_vs_non_experiment(3)
+
 
 if __name__ == '__main__':
     main()
