@@ -12,10 +12,10 @@ class KWSDataset(Dataset):
     samples_per_keyword = 180
 
     # iid: When 1, samples will be iid. Larger numbers use the same keyword as many times.
-    def __init__(self, train: bool, transform=None, iid: int = 1):
+    def __init__(self, train: bool, transform=None, iid_factor: int = 1):
         self.transform = transform
 
-        num_files = iid
+        num_files = iid_factor
 
         all_samples = [None] * (len(self.keywords) * self.samples_per_keyword)
         for word_i, word in enumerate(self.keywords):
