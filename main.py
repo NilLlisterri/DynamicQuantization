@@ -1,3 +1,4 @@
+import pandas as pd
 import random
 import torch
 import torch.optim as optim
@@ -231,6 +232,9 @@ class Experiment:
             {'do_fl': True, 'bits': 6, 'label': '6 bits', 'color': 'g'},
         ]
 
+        excel_data = {}
+        epochs = None
+
         for case in options:
             case_accuracies = []
             for seed in self.seeds:
@@ -245,10 +249,20 @@ class Experiment:
                 )
                 case_accuracies.append(accuracies)
 
-            plt.plot(x, np.average(case_accuracies, axis=0), case['color'], label=case['label'])
+            avg_acc = np.average(case_accuracies, axis=0)
+
+            if epochs is None:
+                epochs = x
+                excel_data["Epoch"] = x
+
+            excel_data[case['label']] = avg_acc
+            plt.plot(x, avg_acc, case['color'], label=case['label'])
 
         plt.legend(loc='center right')
-        plt.savefig(f"plots/accuracy_vs_epochs_vs_quant_bits.png")
+        plt.savefig("plots/accuracy_vs_epochs_vs_quant_bits.png")
+
+        df = pd.DataFrame(excel_data)
+        df.to_excel("plots/accuracy_vs_epochs_vs_quant_bits.xlsx", index=False)
 
     def early_vs_late_quantization(self, num_models: int):
         plt.figure()
@@ -393,12 +407,19 @@ class Experiment:
             {'label': f"Random\n({self.low_bits} → {self.high_bits})",
              'bits': lambda i, nb: random.randint(6, 10)},
         ]
+
         hl_sizes = [10, 15, 20, 25]
 
         width = 0.15
         x = np.arange(len(cases))
+
+        # ----------------- NEW -----------------
+        excel_rows = []
+        # ---------------------------------------
+
         for i, hl_size in enumerate(hl_sizes):
             accuracies = []
+
             for case in cases:
                 case_accuracies = []
                 for seed in self.seeds:
@@ -417,13 +438,27 @@ class Experiment:
                         receive_bits_fn=case['receive_bits'] if 'receive_bits' in case else 'unset'
                     )
                     case_accuracies.append(acc[-1])
-                accuracies.append(np.average(case_accuracies))
+
+                mean_acc = np.average(case_accuracies)
+                accuracies.append(mean_acc)
+
+                # Save for Excel
+                excel_rows.append({
+                    "HL size": hl_size,
+                    "Quantization policy": case['label'].replace("\n", " "),
+                    "Final accuracy": mean_acc
+                })
+
             plt.bar(x + (width * i), accuracies, width, label=f"{hl_size} neurons", zorder=2)
 
         plt.xticks(x + (width * len(hl_sizes) / 2), [f"{case['label']}" for case in cases])
-
         plt.legend(loc='lower left')
-        plt.savefig(f"plots/nn_size.png")
+        plt.savefig("plots/nn_size.png")
+
+        # -------- EXPORT ----------
+        df = pd.DataFrame(excel_rows)
+        df_pivot = df.pivot(index="Quantization policy", columns="HL size", values="Final accuracy")
+        df_pivot.to_excel("plots/nn_size.xlsx")
 
     def iid_vs_non_experiment(self, num_models: int):
         plt.figure()
@@ -485,12 +520,19 @@ class Experiment:
             {'label': f"Random\n({self.low_bits} → {self.high_bits})",
              'bits': lambda i, nb: random.randint(6, 10)},
         ]
+
         iid_policies = [True, 2, 3, 4]
 
         width = 0.15
         x = np.arange(len(cases))
+
+        # -------- NEW --------
+        excel_rows = []
+        # --------------------
+
         for i, iid_policy in enumerate(iid_policies):
             accuracies = []
+
             for case in cases:
                 case_accuracies = []
                 for seed in self.seeds:
@@ -509,13 +551,26 @@ class Experiment:
                         receive_bits_fn=case['receive_bits'] if 'receive_bits' in case else 'unset'
                     )
                     case_accuracies.append(acc[-1])
-                accuracies.append(np.average(case_accuracies))
+
+                mean_acc = np.average(case_accuracies)
+                accuracies.append(mean_acc)
+
+                excel_rows.append({
+                    "IID policy": iid_policy,
+                    "Quantization policy": case['label'].replace("\n", " "),
+                    "Final accuracy": mean_acc
+                })
+
             plt.bar(x + (width * i), accuracies, width, label=f"{iid_policy} IID", zorder=2)
 
         plt.xticks(x + (width * len(iid_policies) / 2), [f"{case['label']}" for case in cases])
-
         plt.legend(loc='lower left')
-        plt.savefig(f"plots/non_iid_policies_experiment.png")
+        plt.savefig("plots/non_iid_policies_experiment.png")
+
+        # ------- EXPORT -------
+        df = pd.DataFrame(excel_rows)
+        df_pivot = df.pivot(index="Quantization policy", columns="IID policy", values="Final accuracy")
+        df_pivot.to_excel("plots/non_iid_policies_experiment.xlsx")
 
 
 def main():
@@ -525,11 +580,11 @@ def main():
     # experiment.accuracy_vs_epochs_vs_quant_bits_experiment(3)
     # experiment.early_vs_late_quantization(3)
     # experiment.quantized_weights_histogram_experiment(3)
-    experiment.asymmetric_quantization_experiment(3)
+    # experiment.asymmetric_quantization_experiment(3)
     # experiment.random_quantization_experiment(3)
     # experiment.nn_size_experiment(3)
     # experiment.iid_vs_non_experiment(3)
-    # experiment.non_iid_policies_experiment(3)
+    experiment.non_iid_policies_experiment(3)
 
 
 if __name__ == '__main__':
