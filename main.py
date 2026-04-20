@@ -204,7 +204,7 @@ class Experiment:
                 self.do_fl(
                     models,
                     send_bits_fn(batch_index, self.fl_batches) if callable(send_bits_fn) else send_bits_fn,
-                    receive_bits_fn(batch_index, self.fl_batches) if callable(receive_bits_fn) else send_bits_fn
+                    receive_bits_fn(batch_index, self.fl_batches) if callable(receive_bits_fn) else receive_bits_fn
                 )
                 accuracy = self.test(models[0], test_loader)
             else:
@@ -324,7 +324,7 @@ class Experiment:
             {'label': f"Symmetric quantization ({self.high_bits})", 'send_bits': self.high_bits,
              'receive_bits': self.high_bits, 'color': 'r--'},
             {'label': f"Symmetric quantization ({self.low_bits})", 'send_bits': self.low_bits,
-             'receive_bits': self.high_bits, 'color': 'g--'},
+             'receive_bits': self.low_bits, 'color': 'g--'},
             {'label': f"Asymmetric quantization ({self.high_bits} → {self.low_bits})", 'send_bits': self.high_bits,
              'receive_bits': self.low_bits, 'color': 'b'},
             {'label': f"Asymmetric quantization (6 → 8)", 'send_bits': self.low_bits, 'receive_bits': self.high_bits,
