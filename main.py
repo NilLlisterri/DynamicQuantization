@@ -199,7 +199,9 @@ class Experiment:
                 last_sample = start + (self.samples_per_fl_batch * (model_index + 1))
                 self.train(models[model_index], range(first_sample, last_sample), optimizers[model_index], dataset)
 
-            x.append((batch_index + 1) * self.samples_per_fl_batch)
+            # x.append((batch_index + 1) * self.samples_per_fl_batch)
+            x.append((batch_index + 1))
+
             if do_fl:
                 self.do_fl(
                     models,
@@ -219,7 +221,7 @@ class Experiment:
 
     def accuracy_vs_epochs_vs_quant_bits_experiment(self, num_models):
         plt.figure()
-        plt.xlabel("Epoch")
+        plt.xlabel("Federated learning round")
         plt.ylabel("Accuracy")
         plt.ylim(top=100, bottom=15)
         plt.title("Accuracy vs epochs")
@@ -259,7 +261,7 @@ class Experiment:
             plt.plot(x, avg_acc, case['color'], label=case['label'])
 
         plt.legend(loc='center right')
-        plt.savefig("plots/accuracy_vs_epochs_vs_quant_bits.png")
+        plt.savefig("plots/accuracy_vs_epochs_vs_quant_bits.pdf")
 
         df = pd.DataFrame(excel_data)
         df.to_excel("plots/accuracy_vs_epochs_vs_quant_bits.xlsx", index=False)
@@ -346,7 +348,7 @@ class Experiment:
                 case_accuracies.append(accuracies)
             plt.plot(x, np.average(case_accuracies, axis=0), case['color'], label=case['label'])
         plt.legend()
-        plt.savefig(f"plots/asymmetric_quantization.png")
+        plt.savefig(f"plots/asymmetric_quantization.pdf")
 
     def random_quantization_experiment(self, num_models: int):
         plt.figure()
@@ -404,7 +406,7 @@ class Experiment:
             {'label': f"Asymmetric\n({self.low_bits} → {self.high_bits})",
              'bits': self.low_bits, 'receive_bits': self.high_bits},
 
-            {'label': f"Random\n({self.low_bits} → {self.high_bits})",
+            {'label': f"Stochastic\n({self.low_bits} - {self.high_bits})",
              'bits': lambda i, nb: random.randint(6, 10)},
         ]
 
@@ -453,7 +455,7 @@ class Experiment:
 
         plt.xticks(x + (width * len(hl_sizes) / 2), [f"{case['label']}" for case in cases])
         plt.legend(loc='lower left')
-        plt.savefig("plots/nn_size.png")
+        plt.savefig("plots/nn_size.pdf")
 
         # -------- EXPORT ----------
         df = pd.DataFrame(excel_rows)
@@ -517,7 +519,7 @@ class Experiment:
             {'label': f"Asymmetric\n({self.low_bits} → {self.high_bits})",
              'bits': self.low_bits, 'receive_bits': self.high_bits},
 
-            {'label': f"Random\n({self.low_bits} → {self.high_bits})",
+            {'label': f"Stochastic\n({self.low_bits} - {self.high_bits})",
              'bits': lambda i, nb: random.randint(6, 10)},
         ]
 
@@ -565,7 +567,7 @@ class Experiment:
 
         plt.xticks(x + (width * len(iid_policies) / 2), [f"{case['label']}" for case in cases])
         plt.legend(loc='lower left')
-        plt.savefig("plots/non_iid_policies_experiment.png")
+        plt.savefig("plots/non_iid_policies_experiment.pdf")
 
         # ------- EXPORT -------
         df = pd.DataFrame(excel_rows)
@@ -577,14 +579,14 @@ def main():
     experiment = Experiment()
 
     # experiment.accuracy_loss_experiment()
-    # experiment.accuracy_vs_epochs_vs_quant_bits_experiment(3)
+    experiment.accuracy_vs_epochs_vs_quant_bits_experiment(3)
     # experiment.early_vs_late_quantization(3)
     # experiment.quantized_weights_histogram_experiment(3)
     # experiment.asymmetric_quantization_experiment(3)
     # experiment.random_quantization_experiment(3)
     # experiment.nn_size_experiment(3)
     # experiment.iid_vs_non_experiment(3)
-    experiment.non_iid_policies_experiment(3)
+    # experiment.non_iid_policies_experiment(3)
 
 
 if __name__ == '__main__':
