@@ -124,7 +124,7 @@ git-ignored and must exist before running (`mkdir -p plots`).
 ## Related repositories
 
 - Hardware client firmware (Arduino Portenta H7):
-  [NilLlisterri/FLLoRaMesher](https://github.com/NilLlisterri/FLLoRaMesher)
+  [NilLlisterri/FL_LoRaMesher](https://github.com/NilLlisterri/FL_LoRaMesher)
   (branch `no-reliable-payloads`)
 - LoRa mesh router firmware (TTGO LoRa32):
   [NilLlisterri/TTGO-LoRaMesher](https://github.com/NilLlisterri/TTGO-LoRaMesher)
