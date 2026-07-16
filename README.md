@@ -37,7 +37,7 @@ utterances for 4 keywords ("montserrat", "pedraforca", "vermell", "blau"),
 180 samples per keyword (720 total), of which 120 are held out as a global
 test set. The dataset is not included in this repository (see `.gitignore`);
 it is available at
-[NilLlisterri/FLLoRaMesher](https://github.com/NilLlisterri/FLLoRaMesher)
+[NilLlisterri/FL_LoRaMesher](https://github.com/NilLlisterri/FL_LoRaMesher)
 (branch `no-reliable-payloads`).
 
 Download it and place it so that the directory structure is:
