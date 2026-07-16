@@ -7,6 +7,7 @@ from torchvision import datasets, transforms
 from KWSDataset import KWSDataset
 from Nets import MnistNet, KWSNet
 from quantization import scale_weights, descale_weights, get_scale_range
+from stc import sparsify_ternarize, stc_bits
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
@@ -167,6 +168,89 @@ class Experiment:
 
         return bits
 
+    def do_fl_stc(self, models, prev_global_weights, p_up: float, p_down: float, client_residuals, server_residual):
+        """One round of STC-compressed FedAvg (Sattler et al., 2020), adapted to this
+        simulator's round-based FL loop: sparsify+ternarize the weight delta of each
+        client (upload) with client-side residual error-feedback, average, then
+        sparsify+ternarize the aggregated delta again (download) with a server-side
+        residual, before applying it to all client models. Returns (bits, new_global_weights),
+        where bits is one client's upload cost plus one download cost, matching the
+        accounting convention of do_fl (both directions, single representative client)."""
+        prev = np.array(prev_global_weights)
+        tilde_deltas = []
+        k_up = 0
+        for i, model in enumerate(models):
+            delta_i = np.array(model.get_flat_weights()) - prev
+            a_i = client_residuals[i] + delta_i
+            tilde_delta_i, k_up = sparsify_ternarize(a_i, p_up)
+            client_residuals[i] = a_i - tilde_delta_i
+            tilde_deltas.append(tilde_delta_i)
+
+        avg_tilde_delta = np.mean(tilde_deltas, axis=0)
+        a_server = server_residual[0] + avg_tilde_delta
+        tilde_delta_server, k_down = sparsify_ternarize(a_server, p_down)
+        server_residual[0] = a_server - tilde_delta_server
+
+        new_global = prev + tilde_delta_server
+        for model in models:
+            model.set_flat_weights(new_global.tolist())
+
+        bits = stc_bits(k_up, p_up) + stc_bits(k_down, p_down)
+        return bits, new_global
+
+    def batch_training_stc(self, test_loader, models, optimizers, dataset, p_up: float, p_down: float):
+        n = len(models[0].get_flat_weights())
+        client_residuals = [np.zeros(n) for _ in models]
+        server_residual = [np.zeros(n)]
+
+        total_bits = 0
+        x = [0]
+        accuracies = [sum(self.test(model, test_loader) for model in models) / len(models)]
+        global_weights = models[0].get_flat_weights()
+        for batch_index in tqdm(range(self.fl_batches), desc="Training samples batch (STC)"):
+            start = batch_index * self.samples_per_fl_batch * len(models)
+            for model_index in range(len(models)):
+                first_sample = start + (self.samples_per_fl_batch * model_index)
+                last_sample = start + (self.samples_per_fl_batch * (model_index + 1))
+                self.train(models[model_index], range(first_sample, last_sample), optimizers[model_index], dataset)
+
+            x.append(batch_index + 1)
+            bits, global_weights = self.do_fl_stc(models, global_weights, p_up, p_down, client_residuals, server_residual)
+            total_bits += bits
+            accuracies.append(self.test(models[0], test_loader))
+
+        return x, accuracies, total_bits
+
+    def stc_sparsity_sweep(self, num_models, p_values, hl_size=20):
+        """Sweeps the STC sparsity rate p (symmetric upload/download) at a fixed
+        hidden-layer size, over the same 15 seeds used elsewhere, to find the
+        accuracy/communication-cost trade-off of the Sattler et al. baseline for
+        comparison against DynQuant's policies (EiC/R2 request)."""
+        results = []
+        for p in p_values:
+            accs = []
+            bits_per_round_list = []
+            for seed in self.seeds:
+                self.set_seed(seed)
+                test_loader = self.get_test_loader()
+                train_dataset = KWSDataset(True, transform=self.dataset_transform, iid_factor=True)
+                models, optimizers = self.init_models(num_models, {'hl_size': hl_size})
+                x, accuracies, bits = self.batch_training_stc(test_loader, models, optimizers, train_dataset, p, p)
+                accs.append(accuracies[-1])
+                bits_per_round_list.append(bits / self.fl_batches)
+
+            result = {
+                'p': p,
+                'acc_mean': float(np.mean(accs)),
+                'acc_std': float(np.std(accs)),
+                'bits_per_round': float(np.mean(bits_per_round_list)),
+            }
+            results.append(result)
+            print(f"STC p={p}: acc={result['acc_mean']:.2f} +/- {result['acc_std']:.2f}, "
+                  f"bits/round={result['bits_per_round']:.1f} "
+                  f"(bytes/round={result['bits_per_round'] / 8:.1f})")
+        return results
+
     def accuracy_loss_experiment(self):
         self.reset_state()
 
@@ -227,6 +311,31 @@ class Experiment:
         test_dataset = KWSDataset(False, transform=self.dataset_transform)
         return torch.utils.data.DataLoader(test_dataset, **self.test_kwargs)
 
+    def centralized_training_curve(self, num_models):
+        """Trains a single model on the pooled (non-federated) data as an upper-bound
+        reference. Each round consumes num_models * samples_per_fl_batch samples (the
+        same total per-round data volume as the num_models FL clients combined), for
+        the same number of rounds (self.fl_batches), so the resulting final accuracy
+        is directly comparable to the FL curves without a data-budget confound.
+        Returns (mean, std) of the final accuracy across self.seeds."""
+        pooled_batch_size = self.samples_per_fl_batch * num_models
+        final_accuracies = []
+        for seed in self.seeds:
+            self.set_seed(seed)
+
+            test_loader = self.get_test_loader()
+            train_dataset = KWSDataset(True, transform=self.dataset_transform, iid_factor=True)
+
+            models, optimizers = self.init_models(1, {'hl_size': 20})
+            model, optimizer = models[0], optimizers[0]
+            for batch_index in range(self.fl_batches):
+                start = batch_index * pooled_batch_size
+                self.train(model, range(start, start + pooled_batch_size), optimizer, train_dataset)
+
+            final_accuracies.append(self.test(model, test_loader))
+
+        return float(np.mean(final_accuracies)), float(np.std(final_accuracies))
+
     def accuracy_vs_epochs_vs_quant_bits_experiment(self, num_models):
         plt.figure()
         plt.xlabel("Federated learning round")
@@ -270,6 +379,15 @@ class Experiment:
             color = case['color'][0]  # extract the letter, e.g. 'b' from 'b--'
             plt.plot(x, avg_acc, case['color'], label=case['label'])
             plt.fill_between(x, avg_acc - std_acc, avg_acc + std_acc, alpha=0.15, color=color)
+
+        centralized_mean, centralized_std = self.centralized_training_curve(num_models)
+        plt.axhline(y=centralized_mean, color='k', linestyle=':', linewidth=1.5,
+                    label=f'Centralized (final, {centralized_mean:.1f}%)')
+        plt.axhspan(centralized_mean - centralized_std, centralized_mean + centralized_std,
+                    color='k', alpha=0.08)
+        excel_data['Centralized (final, mean)'] = [centralized_mean] + [None] * (len(epochs) - 1)
+        excel_data['Centralized (final, std)'] = [centralized_std] + [None] * (len(epochs) - 1)
+        print(f"Centralized final accuracy: {centralized_mean:.2f} +/- {centralized_std:.2f} (mean +/- std over {len(self.seeds)} seeds)")
 
         plt.legend(loc='center right')
         plt.savefig("plots/accuracy_vs_epochs_vs_quant_bits.pdf")
@@ -428,7 +546,9 @@ class Experiment:
         width = 0.15
         x = np.arange(len(cases))
 
+        # ----------------- NEW -----------------
         excel_rows = []
+        # ---------------------------------------
 
         for i, hl_size in enumerate(hl_sizes):
             accuracies = []
@@ -463,9 +583,7 @@ class Experiment:
                     "HL size": hl_size,
                     "Quantization policy": case['label'].replace("\n", " "),
                     "Final accuracy": mean_acc,
-                    "Total bits": case_bits,
-                    "Accuracies": case_accuracies,
-                    "STD": std_acc
+                    "Total bits": case_bits
                 })
 
             means, stds = zip(*accuracies)
@@ -476,8 +594,9 @@ class Experiment:
         plt.legend(loc='lower left')
         plt.savefig("plots/nn_size.pdf")
 
+        # -------- EXPORT ----------
         df = pd.DataFrame(excel_rows)
-        df_pivot = df.pivot(index="Quantization policy", columns="HL size", values=["Final accuracy", "Accuracies", "STD"])
+        df_pivot = df.pivot(index="Quantization policy", columns="HL size", values=["Final accuracy", "Total bits"])
         df_pivot.to_excel("plots/nn_size.xlsx")
 
     def iid_vs_non_experiment(self, num_models: int):
@@ -610,9 +729,10 @@ def main():
     # experiment.quantized_weights_histogram_experiment(3)
     # experiment.asymmetric_quantization_experiment(3)
     # experiment.random_quantization_experiment(3)
-    experiment.nn_size_experiment(3)
+    # experiment.nn_size_experiment(3)
     # experiment.iid_vs_non_experiment(3)
     # experiment.non_iid_policies_experiment(3)
+    experiment.stc_sparsity_sweep(3, [0.01, 0.02, 0.05, 0.1, 0.2, 0.3], hl_size=20)
 
 
 if __name__ == '__main__':
