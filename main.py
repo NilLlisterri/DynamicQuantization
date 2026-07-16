@@ -428,9 +428,7 @@ class Experiment:
         width = 0.15
         x = np.arange(len(cases))
 
-        # ----------------- NEW -----------------
         excel_rows = []
-        # ---------------------------------------
 
         for i, hl_size in enumerate(hl_sizes):
             accuracies = []
@@ -465,7 +463,9 @@ class Experiment:
                     "HL size": hl_size,
                     "Quantization policy": case['label'].replace("\n", " "),
                     "Final accuracy": mean_acc,
-                    "Total bits": case_bits
+                    "Total bits": case_bits,
+                    "Accuracies": case_accuracies,
+                    "STD": std_acc
                 })
 
             means, stds = zip(*accuracies)
@@ -476,9 +476,8 @@ class Experiment:
         plt.legend(loc='lower left')
         plt.savefig("plots/nn_size.pdf")
 
-        # -------- EXPORT ----------
         df = pd.DataFrame(excel_rows)
-        df_pivot = df.pivot(index="Quantization policy", columns="HL size", values=["Final accuracy", "Total bits"])
+        df_pivot = df.pivot(index="Quantization policy", columns="HL size", values=["Final accuracy", "Accuracies", "STD"])
         df_pivot.to_excel("plots/nn_size.xlsx")
 
     def iid_vs_non_experiment(self, num_models: int):
@@ -552,9 +551,7 @@ class Experiment:
         width = 0.15
         x = np.arange(len(cases))
 
-        # -------- NEW --------
         excel_rows = []
-        # --------------------
 
         for i, iid_policy in enumerate(iid_policies):
             accuracies = []
@@ -585,7 +582,9 @@ class Experiment:
                 excel_rows.append({
                     "IID policy": iid_policy,
                     "Quantization policy": case['label'].replace("\n", " "),
-                    "Final accuracy": mean_acc
+                    "Final accuracy": mean_acc,
+                    "Case accuracies": case_accuracies,
+                    "STD": std_acc
                 })
 
             means, stds = zip(*accuracies)
@@ -598,7 +597,7 @@ class Experiment:
 
         # ------- EXPORT -------
         df = pd.DataFrame(excel_rows)
-        df_pivot = df.pivot(index="Quantization policy", columns="IID policy", values="Final accuracy")
+        df_pivot = df.pivot(index="Quantization policy", columns="IID policy", values=["Final accuracy", "Case accuracies", "STD"])
         df_pivot.to_excel("plots/non_iid_policies_experiment.xlsx")
 
 
