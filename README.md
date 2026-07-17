@@ -85,9 +85,14 @@ Mapping from paper section/figure to the experiment method in `main.py`:
 | Section 5.1, Fig. 2 (accuracy vs. FL round for different static bit widths, incl. "No FL") | `accuracy_vs_epochs_vs_quant_bits_experiment(num_models)` |
 | Section 5.2 (early vs. late quantization) | `early_vs_late_quantization(num_models)` |
 | Section 5.3 (asymmetric quantization, line-plot exploration) | `asymmetric_quantization_experiment(num_models)` |
-| Section 5.4, Fig. 3 (accuracy by hidden-layer size and policy) / Table 4 (transmission cost) | `nn_size_experiment(num_models)` |
+| Section 5.4, Fig. 3 (accuracy by hidden-layer size and policy) | `nn_size_experiment(num_models)` |
 | Section 5.5, Fig. 4 (non-IID data) | `iid_vs_non_experiment(num_models)`, `non_iid_policies_experiment(num_models)` |
-| Section 5.7, Table 6 (comparison against STC, Sattler et al. 2020) | `stc_sparsity_sweep(num_models, p_values, hl_size=20)` |
+| Section 6.3, Table 6 (comparison against STC, Sattler et al. 2020) | `stc_sparsity_sweep(num_models, p_values, hl_size=20)` |
+
+Note: Table 4 and Table 5 (transmission cost/time) describe the separate hardware-prototype
+firmware (650-neuron input layer, see `FL_LoRaMesher`/`NN.h`), not this simulator, which uses
+a 1053-neuron input layer (see `KWSNet` in `Nets.py`); the two codebases have independently
+configured MFCC feature extraction. See Section 3 of the paper for details.
 | Exploratory (not used for a paper figure) | `accuracy_loss_experiment`, `quantized_weights_histogram_experiment`, `random_quantization_experiment` |
 
 Note: Figure 1 in the paper is the DynQuant design diagram (not produced by
