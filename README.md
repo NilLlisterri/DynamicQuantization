@@ -61,7 +61,7 @@ MFCCs (`KWSDataset.py`).
 | `KWSDataset.py` | PyTorch `Dataset` for the keyword-spotting data, with IID / non-IID client partitioning (`iid_factor`). |
 | `Nets.py` | Model definitions. `KWSNet` (a 2-layer feed-forward network, `hl_size` neurons in the hidden layer) is the model used in the paper. |
 | `quantization.py` | Min-max uniform quantization/dequantization of a flat weight vector to `N` bits. |
-| `stc.py` | Sparse ternary compression (STC) baseline: re-implementation of Sattler et al., "Robust and Communication-Efficient Federated Learning From Non-i.i.d. Data" (IEEE TNNLS, 2020) — top-`k` sparsification, ternarization, and the Golomb-optimal communication-cost formula, used for the comparison in Section 5.7. |
+| `stc.py` | Sparse ternary compression (STC) baseline: re-implementation of Sattler et al., "Robust and Communication-Efficient Federated Learning From Non-i.i.d. Data" (IEEE TNNLS, 2020) — top-`k` sparsification, ternarization, and the Golomb-optimal communication-cost formula, used for the comparison in Section 6.3. |
 | `tests/quantization_tests.py` | Unit tests for `quantization.py`. |
 | `requirements.txt` | Python dependencies. |
 
@@ -88,12 +88,12 @@ Mapping from paper section/figure to the experiment method in `main.py`:
 | Section 5.4, Fig. 3 (accuracy by hidden-layer size and policy) | `nn_size_experiment(num_models)` |
 | Section 5.5, Fig. 4 (non-IID data) | `iid_vs_non_experiment(num_models)`, `non_iid_policies_experiment(num_models)` |
 | Section 6.3, Table 6 (comparison against STC, Sattler et al. 2020) | `stc_sparsity_sweep(num_models, p_values, hl_size=20)` |
+| Exploratory (not used for a paper figure) | `accuracy_loss_experiment`, `quantized_weights_histogram_experiment`, `random_quantization_experiment` |
 
 Note: Table 4 and Table 5 (transmission cost/time) describe the separate hardware-prototype
 firmware (650-neuron input layer, see `FL_LoRaMesher`/`NN.h`), not this simulator, which uses
 a 1053-neuron input layer (see `KWSNet` in `Nets.py`); the two codebases have independently
 configured MFCC feature extraction. See Section 3 of the paper for details.
-| Exploratory (not used for a paper figure) | `accuracy_loss_experiment`, `quantized_weights_histogram_experiment`, `random_quantization_experiment` |
 
 Note: Figure 1 in the paper is the DynQuant design diagram (not produced by
 this simulator); the simulator's figures start at Figure 2.
