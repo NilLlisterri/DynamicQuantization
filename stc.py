@@ -10,23 +10,19 @@ import numpy as np
 
 
 def sparsify_ternarize(x: np.ndarray, p: float):
-    """STC, Algorithm 1. Keeps the top round(p * n) elements of x by magnitude,
-    replaces them with +-mu (their mean magnitude) according to sign, and zeroes
-    the rest. Returns (ternary_tensor, k) where k is the number of nonzeros."""
+    """STC, Algorithm 1. Always selects exactly k = max(round(p * n), 1) elements of
+    x by magnitude (ties broken by index order via argpartition, so k is a
+    deterministic function of (n, p) alone, matching Algorithm 1's definition where
+    k is computed before the data is inspected), replaces them with +-mu (their mean
+    magnitude) according to sign, and zeroes the rest. Returns (ternary_tensor, k)."""
     n = len(x)
-    k = max(int(round(p * n)), 1)
+    k = min(max(int(round(p * n)), 1), n)
     abs_x = np.abs(x)
-    if k >= n:
-        threshold = 0.0
-    else:
-        threshold = np.partition(abs_x, n - k)[n - k]
-    mask = abs_x >= threshold
-    masked = x * mask
-    k_actual = int(mask.sum())
-    if k_actual == 0:
-        return np.zeros_like(x), 0
-    mu = np.sum(np.abs(masked)) / k_actual
-    return mu * np.sign(masked), k_actual
+    top_idx = np.arange(n) if k == n else np.argpartition(abs_x, n - k)[n - k:]
+    mu = float(np.mean(abs_x[top_idx]))
+    result = np.zeros_like(x)
+    result[top_idx] = mu * np.sign(x[top_idx])
+    return result, k
 
 
 def golomb_bits_per_position(p: float) -> float:

@@ -199,14 +199,23 @@ class Experiment:
         return bits, new_global
 
     def batch_training_stc(self, test_loader, models, optimizers, dataset, p_up: float, p_down: float):
-        n = len(models[0].get_flat_weights())
+        # Sattler et al.'s Algorithm 2 assumes all clients start from the same initial
+        # parameters W. init_models() gives each client an independently-random
+        # initialization instead, so synchronize every client to model 0's weights
+        # before the round loop, matching Algorithm 2's precondition. (This matters
+        # specifically for STC's delta/residual protocol; the rest of the simulator's
+        # weight-averaging FedAvg is insensitive to independent client initialization.)
+        global_weights = models[0].get_flat_weights()
+        for model in models[1:]:
+            model.set_flat_weights(global_weights)
+
+        n = len(global_weights)
         client_residuals = [np.zeros(n) for _ in models]
         server_residual = [np.zeros(n)]
 
         total_bits = 0
         x = [0]
         accuracies = [sum(self.test(model, test_loader) for model in models) / len(models)]
-        global_weights = models[0].get_flat_weights()
         for batch_index in tqdm(range(self.fl_batches), desc="Training samples batch (STC)"):
             start = batch_index * self.samples_per_fl_batch * len(models)
             for model_index in range(len(models)):
@@ -670,7 +679,9 @@ class Experiment:
         width = 0.15
         x = np.arange(len(cases))
 
+        # -------- NEW --------
         excel_rows = []
+        # --------------------
 
         for i, iid_policy in enumerate(iid_policies):
             accuracies = []
@@ -701,9 +712,7 @@ class Experiment:
                 excel_rows.append({
                     "IID policy": iid_policy,
                     "Quantization policy": case['label'].replace("\n", " "),
-                    "Final accuracy": mean_acc,
-                    "Case accuracies": case_accuracies,
-                    "STD": std_acc
+                    "Final accuracy": mean_acc
                 })
 
             means, stds = zip(*accuracies)
@@ -716,7 +725,7 @@ class Experiment:
 
         # ------- EXPORT -------
         df = pd.DataFrame(excel_rows)
-        df_pivot = df.pivot(index="Quantization policy", columns="IID policy", values=["Final accuracy", "Case accuracies", "STD"])
+        df_pivot = df.pivot(index="Quantization policy", columns="IID policy", values="Final accuracy")
         df_pivot.to_excel("plots/non_iid_policies_experiment.xlsx")
 
 
@@ -729,10 +738,10 @@ def main():
     # experiment.quantized_weights_histogram_experiment(3)
     # experiment.asymmetric_quantization_experiment(3)
     # experiment.random_quantization_experiment(3)
-    # experiment.nn_size_experiment(3)
+    experiment.nn_size_experiment(3)
     # experiment.iid_vs_non_experiment(3)
     # experiment.non_iid_policies_experiment(3)
-    experiment.stc_sparsity_sweep(3, [0.01, 0.02, 0.05, 0.1, 0.2, 0.3], hl_size=20)
+    # experiment.stc_sparsity_sweep(3, [0.001, 0.005, 0.01, 0.02, 0.05, 0.1], hl_size=20)
 
 
 if __name__ == '__main__':
