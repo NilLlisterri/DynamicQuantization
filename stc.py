@@ -11,13 +11,19 @@ import numpy as np
 
 def sparsify_ternarize(x: np.ndarray, p: float):
     """STC, Algorithm 1. Always selects exactly k = max(round(p * n), 1) elements of
-    x by magnitude (ties broken by index order via argpartition, so k is a
-    deterministic function of (n, p) alone, matching Algorithm 1's definition where
-    k is computed before the data is inspected), replaces them with +-mu (their mean
-    magnitude) according to sign, and zeroes the rest. Returns (ternary_tensor, k)."""
+    x by magnitude via argpartition; k itself is a deterministic function of (n, p)
+    alone, matching Algorithm 1's definition where k is computed before the data is
+    inspected, but which specific elements are chosen among exact magnitude ties is
+    left to argpartition's internal selection algorithm and is not guaranteed to
+    follow index order (ties are not expected in practice with real-valued weight
+    deltas). Replaces the selected elements with +-mu (their mean magnitude)
+    according to sign, and zeroes the rest. Returns (ternary_tensor, k), with k = 0
+    for an all-zero input (nothing to sparsify)."""
     n = len(x)
-    k = min(max(int(round(p * n)), 1), n)
     abs_x = np.abs(x)
+    if not np.any(abs_x):
+        return np.zeros_like(x), 0
+    k = min(max(int(round(p * n)), 1), n)
     top_idx = np.arange(n) if k == n else np.argpartition(abs_x, n - k)[n - k:]
     mu = float(np.mean(abs_x[top_idx]))
     result = np.zeros_like(x)
